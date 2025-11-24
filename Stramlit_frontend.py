@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import plotly.graph_objects as go
 
 # ==========================================
 # CONFIGURACIÓN
@@ -14,49 +15,94 @@ if 'recursion_level' not in st.session_state:
     st.session_state.recursion_level = 0
 
 # ==========================================
-# ESTILOS CSS
+# ESTILOS CSS CON EFECTOS 3D
 # ==========================================
 st.markdown("""
     <style>
     .main-title {
         text-align: center;
         color: #1DB954;
-        font-size: 3rem;
+        font-size: 3.5rem;
         font-weight: bold;
         margin-bottom: 0.5rem;
+        text-shadow: 
+            0 1px 0 #16a34a,
+            0 2px 0 #15803d,
+            0 3px 0 #166534,
+            0 4px 0 #14532d,
+            0 5px 0 #052e16,
+            0 6px 1px rgba(0,0,0,.1),
+            0 0 5px rgba(29, 185, 84, .2),
+            0 1px 3px rgba(0,0,0,.15),
+            0 3px 5px rgba(0,0,0,.1),
+            0 5px 10px rgba(0,0,0,.15),
+            0 10px 10px rgba(0,0,0,.1),
+            0 20px 20px rgba(0,0,0,.08);
+        transform: translateY(-10px);
+        animation: float 3s ease-in-out infinite;
+    }
+    @keyframes float {
+        0%, 100% { transform: translateY(-10px); }
+        50% { transform: translateY(-15px); }
     }
     .subtitle {
         text-align: center;
         color: #666;
-        font-size: 1.2rem;
+        font-size: 1.3rem;
         margin-bottom: 2rem;
+        text-shadow: 
+            2px 2px 4px rgba(0,0,0,0.1),
+            0 0 10px rgba(29, 185, 84, 0.1);
+        letter-spacing: 2px;
+        font-weight: 500;
     }
     .song-card {
-        background-color: #f0f2f6;
+        background: linear-gradient(145deg, #ffffff, #e8e8e8);
         padding: 1rem;
         border-radius: 10px;
         margin-bottom: 1rem;
         border-left: 4px solid #1DB954;
+        box-shadow: 
+            5px 5px 15px rgba(0,0,0,0.1),
+            -5px -5px 15px rgba(255,255,255,0.7);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .song-card:hover {
+        transform: translateY(-5px) scale(1.02);
+        box-shadow: 
+            8px 8px 20px rgba(0,0,0,0.15),
+            -8px -8px 20px rgba(255,255,255,0.8);
     }
     .found-song {
-        background-color: #e8f5e9;
+        background: linear-gradient(145deg, #e8f5e9, #c8e6c9);
         padding: 1.5rem;
         border-radius: 10px;
         margin: 1rem 0;
         border: 2px solid #1DB954;
+        box-shadow: 
+            0 10px 30px rgba(29, 185, 84, 0.2),
+            inset 0 1px 0 rgba(255,255,255,0.5);
+        transform-style: preserve-3d;
     }
     .rec-title {
         color: #1DB954;
-        font-size: 1.5rem;
+        font-size: 1.8rem;
         font-weight: bold;
         margin-top: 2rem;
+        text-shadow: 
+            2px 2px 0 #c8e6c9,
+            4px 4px 10px rgba(29, 185, 84, 0.3);
+        transform: perspective(500px) rotateX(5deg);
     }
     .nested-rec {
-        background-color: #fff3e0;
+        background: linear-gradient(145deg, #fff3e0, #ffe0b2);
         padding: 1.5rem;
         border-radius: 10px;
         margin: 2rem 0;
         border: 2px solid #ff9800;
+        box-shadow: 
+            0 10px 30px rgba(255, 152, 0, 0.15),
+            inset 0 1px 0 rgba(255,255,255,0.5);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -92,6 +138,56 @@ def get_recommendations(song_name, artist_name=""):
     except Exception as e:
         return None, f"❌ Error inesperado: {str(e)}"
 
+def create_similarity_chart(recommendations):
+    """Crear gráfico de similitud con Plotly"""
+    similarities = []
+    song_names = []
+    
+    for rec in recommendations:
+        similarity = 100 - (rec['similarity_distance'] * 10)
+        similarity = max(0, min(100, similarity))
+        similarities.append(similarity)
+        song_label = f"{rec['name'][:30]}..." if len(rec['name']) > 30 else rec['name']
+        song_names.append(song_label)
+    
+    # Colores basados en similitud
+    colors = ['#1DB954' if s >= 90 else '#4CAF50' if s >= 80 else '#FFA726' if s >= 70 else '#FF7043' 
+              for s in similarities]
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=song_names,
+        y=similarities,
+        marker=dict(
+            color=colors,
+            line=dict(color='rgba(0,0,0,0.3)', width=1)
+        ),
+        text=[f'{s:.1f}%' for s in similarities],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>Similitud: %{y:.1f}%<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title={
+            'text': '📊 Nivel de Similitud con la Canción Original',
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 20, 'color': '#1DB954', 'family': 'Arial Black'}
+        },
+        xaxis_title='',
+        yaxis_title='Similitud (%)',
+        yaxis=dict(range=[0, 105], gridcolor='rgba(0,0,0,0.1)'),
+        xaxis=dict(tickangle=-45),
+        height=500,
+        plot_bgcolor='rgba(240,240,240,0.5)',
+        paper_bgcolor='white',
+        font=dict(size=12),
+        margin=dict(l=60, r=40, t=60, b=120)
+    )
+    
+    return fig
+
 def display_recommendations_table(data, key_suffix=""):
     """Función para mostrar solo la tabla de recomendaciones"""
     recommendations = data['recommendations']
@@ -121,7 +217,7 @@ def display_recommendations_table(data, key_suffix=""):
             with col3:
                 similarity = 100 - (rec['similarity_distance'] * 10)
                 similarity = max(0, min(100, similarity))
-                st.metric("Similitud", f"{similarity:.0f}%")
+                st.metric("Similitud", f"{similarity:.1f}%")
             
             st.markdown('</div>', unsafe_allow_html=True)
     
@@ -138,6 +234,12 @@ def display_recommendations_table(data, key_suffix=""):
         selection_mode="single-row",
         key=f"dataframe_{key_suffix}"
     )
+    
+    # GRÁFICO DE SIMILITUD AL FINAL
+    st.markdown("---")
+    st.markdown("### 📈 Gráfico de Similitud")
+    fig = create_similarity_chart(recommendations)
+    st.plotly_chart(fig, use_container_width=True)
     
     # Retornar la selección
     if event.selection and len(event.selection.rows) > 0:
@@ -275,8 +377,8 @@ with st.sidebar:
     1. Escribe el nombre de una canción
     2. (Opcional) Añade el artista
     3. Haz clic en buscar
-    4. **¡Haz clic en cualquier fila de la tabla!**
-    5. Se cargarán automáticamente las recomendaciones
+    4. **¡Verás un gráfico de similitud!**
+    5. Haz clic en cualquier fila de la tabla
     6. ¡Puedes explorar hasta 3 niveles!
     """)
     
