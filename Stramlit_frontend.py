@@ -142,9 +142,41 @@ def create_similarity_chart(recommendations):
     """Crear gráfico de similitud con Plotly"""
     similarities = []
     song_names = []
-    
+    # Check whether any recommendation contains available similarity fields
+    has_similarity = any(
+        (('similarity_percentage' in rec and rec['similarity_percentage'] is not None)
+         or ('similarity_score' in rec and rec['similarity_score'] is not None)
+         or ('similarity_distance' in rec and rec['similarity_distance'] is not None))
+        for rec in recommendations
+    )
+
+    # If there's no similarity info, return None so caller can handle it
+    if not has_similarity:
+        return None
+
     for rec in recommendations:
-        similarity = 100 - (rec['similarity_distance'] * 10)
+        # Prefer new fields: similarity_percentage (already in %), then similarity_score (0-1),
+        # then legacy similarity_distance
+        similarity = None
+        if 'similarity_percentage' in rec and rec['similarity_percentage'] is not None:
+            try:
+                similarity = float(rec['similarity_percentage'])
+            except Exception:
+                similarity = None
+        elif 'similarity_score' in rec and rec['similarity_score'] is not None:
+            try:
+                similarity = float(rec['similarity_score']) * 100.0
+            except Exception:
+                similarity = None
+        elif 'similarity_distance' in rec and rec['similarity_distance'] is not None:
+            try:
+                similarity = 100 - (float(rec['similarity_distance']) * 10.0)
+            except Exception:
+                similarity = None
+
+        # If still None, treat as 0 for chart alignment (but caller hides chart if no similarities)
+        if similarity is None:
+            similarity = 0.0
         similarity = max(0, min(100, similarity))
         similarities.append(similarity)
         song_label = f"{rec['name'][:30]}..." if len(rec['name']) > 30 else rec['name']
@@ -194,11 +226,53 @@ def display_recommendations_table(data, key_suffix=""):
     
     # Crear DataFrame para la tabla interactiva
     df_display = pd.DataFrame(recommendations)
-    df_display = df_display[['name', 'artists', 'year', 'popularity', 'similarity_distance']]
-    df_display['year'] = df_display['year'].astype(int)
-    df_display['popularity'] = df_display['popularity'].astype(int)
-    df_display['similarity_distance'] = df_display['similarity_distance'].round(4)
-    df_display.columns = ['Canción', 'Artista', 'Año', 'Popularidad', 'Distancia']
+
+    # Ensure required columns exist to avoid KeyError if API omits any
+    expected_cols = [
+        'name', 'artists', 'year', 'popularity',
+        # similarity fields (new + legacy)
+        'similarity_percentage', 'similarity_score', 'similarity_distance',
+        # cluster and features
+        'cluster_type', 'cluster_id', 'cluster_features',
+        # audio features
+        'danceability', 'energy', 'valence', 'acousticness', 'speechiness'
+    ]
+
+    for col in expected_cols:
+        if col not in df_display.columns:
+            # sensible defaults: empty strings for text, NA for similarity, 0 for numeric
+            if col in ('similarity_percentage', 'similarity_score', 'similarity_distance'):
+                df_display[col] = pd.NA
+            elif col in ('year', 'popularity'):
+                df_display[col] = 0
+            elif col in ('danceability', 'energy', 'valence', 'acousticness', 'speechiness'):
+                df_display[col] = pd.NA
+            else:
+                df_display[col] = ''
+
+    # Build a unified similarity percentage column (0-100) from available fields
+    if 'similarity_percentage' in df_display.columns and not df_display['similarity_percentage'].isna().all():
+        df_display['similarity_pct'] = pd.to_numeric(df_display['similarity_percentage'], errors='coerce')
+    elif 'similarity_score' in df_display.columns and not df_display['similarity_score'].isna().all():
+        df_display['similarity_pct'] = pd.to_numeric(df_display['similarity_score'], errors='coerce') * 100.0
+    elif 'similarity_distance' in df_display.columns and not df_display['similarity_distance'].isna().all():
+        df_display['similarity_pct'] = 100.0 - (pd.to_numeric(df_display['similarity_distance'], errors='coerce') * 10.0)
+    else:
+        df_display['similarity_pct'] = pd.NA
+
+    # Safely select and coerce types for table display
+    display_cols = ['name', 'artists', 'year', 'popularity', 'cluster_type', 'similarity_pct']
+    for c in display_cols:
+        if c not in df_display.columns:
+            df_display[c] = pd.NA
+
+    df_display = df_display[display_cols]
+    df_display['year'] = pd.to_numeric(df_display['year'], errors='coerce').fillna(0).astype(int)
+    df_display['popularity'] = pd.to_numeric(df_display['popularity'], errors='coerce').fillna(0).astype(int)
+    # Round similarity_pct and keep NA when missing
+    df_display['similarity_pct'] = pd.to_numeric(df_display['similarity_pct'], errors='coerce').round(2)
+    # Rename to Spanish for the table
+    df_display.columns = ['Canción', 'Artista', 'Año', 'Popularidad', 'Tipo', 'Similitud (%)']
     
     # Mostrar tarjetas individuales
     for i, rec in enumerate(recommendations, 1):
@@ -211,13 +285,60 @@ def display_recommendations_table(data, key_suffix=""):
                 st.markdown(f"👤 {rec['artists']}")
             
             with col2:
-                st.markdown(f"📅 {int(rec['year'])}")
-                st.markdown(f"⭐ Popularidad: {int(rec['popularity'])}")
+                st.markdown(f"📅 {int(rec.get('year', 0))}")
+                st.markdown(f"⭐ Popularidad: {int(rec.get('popularity', 0))}")
+                # Audio features (if present)
+                ad = rec.get('danceability')
+                en = rec.get('energy')
+                va = rec.get('valence')
+                ac = rec.get('acousticness')
+                sp = rec.get('speechiness')
+                features = []
+                if ad is not None:
+                    features.append(f"💃 Dance: {float(ad):.2f}")
+                if en is not None:
+                    features.append(f"⚡ Energy: {float(en):.2f}")
+                if va is not None:
+                    features.append(f"😊 Valence: {float(va):.2f}")
+                if ac is not None:
+                    features.append(f"🎧 Acoustic: {float(ac):.2f}")
+                if sp is not None:
+                    features.append(f"🗣️ Speech: {float(sp):.2f}")
+                if features:
+                    st.markdown("• " + " • ".join(features))
             
             with col3:
-                similarity = 100 - (rec['similarity_distance'] * 10)
-                similarity = max(0, min(100, similarity))
-                st.metric("Similitud", f"{similarity:.1f}%")
+                # Compute similarity from available fields (prefer percentage, then score, then legacy distance)
+                similarity = None
+                if 'similarity_percentage' in rec and rec.get('similarity_percentage') is not None:
+                    try:
+                        similarity = float(rec.get('similarity_percentage'))
+                    except Exception:
+                        similarity = None
+                elif 'similarity_score' in rec and rec.get('similarity_score') is not None:
+                    try:
+                        similarity = float(rec.get('similarity_score')) * 100.0
+                    except Exception:
+                        similarity = None
+                elif 'similarity_distance' in rec and rec.get('similarity_distance') is not None:
+                    try:
+                        similarity = 100 - (float(rec.get('similarity_distance')) * 10.0)
+                    except Exception:
+                        similarity = None
+
+                # Show cluster info briefly
+                cluster_type = rec.get('cluster_type')
+                cluster_id = rec.get('cluster_id')
+                if cluster_type:
+                    st.write(f"🏷️ Cluster: {cluster_type}")
+                if cluster_id:
+                    st.write(f"🆔 Cluster ID: {cluster_id}")
+
+                if similarity is None or pd.isna(similarity):
+                    st.metric("Similitud", "N/A")
+                else:
+                    similarity = max(0, min(100, similarity))
+                    st.metric("Similitud", f"{similarity:.1f}%")
             
             st.markdown('</div>', unsafe_allow_html=True)
     
@@ -239,7 +360,10 @@ def display_recommendations_table(data, key_suffix=""):
     st.markdown("---")
     st.markdown("### 📈 Gráfico de Similitud")
     fig = create_similarity_chart(recommendations)
-    st.plotly_chart(fig, use_container_width=True)
+    if fig is None:
+        st.info("ℹ️ La API no devolvió datos de similitud (campo 'similarity_distance'). El gráfico no se puede mostrar.")
+    else:
+        st.plotly_chart(fig, use_container_width=True)
     
     # Retornar la selección
     if event.selection and len(event.selection.rows) > 0:
